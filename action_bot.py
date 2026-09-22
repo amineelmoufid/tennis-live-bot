@@ -85,13 +85,15 @@ def get_live_match_details(match_url):
 from sheets_exporter import export_prediction_to_sheet
 
 def main():
-    print(f"[{datetime.now()}] Waking up via GitHub Actions to scan market...")
+    print(f"[{datetime.now()}] Waking up via GitHub Actions to scan market for 3.0 Arbitrage...")
     math_engine = FastTennisMath(best_of=3)
     updater = BayesianUpdater(pA_initial=0.65, pB_initial=0.65, prior_weight=100)
     
-    notified_edges = load_state()
+    notified_states = load_state()
     live_matches = get_live_matches()
     print(f"Found {len(live_matches)} matches.")
+    
+    TARGET_ODDS = 3.0
     
     # Limit to top 15 matches to keep execution under 20 seconds
     for match in live_matches[:15]:
@@ -99,49 +101,84 @@ def main():
         if not details: continue
         
         home_odds, away_odds, score, match_id = details['home_odds'], details['away_odds'], details['score_text'], match['id']
-        # We don't have exact player names from Flashscore.mobi scraping currently, so we use Match URL ID
         matchup = f"Match {match_id}"
         
+        # Calculate true odds just for reference
         pA_live, pB_live = updater.get_probs()
         our_win_prob = math_engine.match_prob(pA_live, pB_live, 0, 0, 0, 0, 0, 0, True)
-        ev_home = (our_win_prob * (home_odds - 1)) - ((1 - our_win_prob) * 1)
+        true_home_odds = 1.0 / our_win_prob if our_win_prob > 0 else 999
+        true_away_odds = 1.0 / (1 - our_win_prob) if our_win_prob < 1 else 999
         
-        if ev_home > 0.05:
-            alert_id = f"{match_id}_{score}_{home_odds}"
-            if alert_id not in notified_edges:
-                notified_edges.add(alert_id)
-                true_odds = 1.0 / our_win_prob
-                
-                # Push to Telegram
+        # Keys to track if a player has hit 3.0 in this specific match
+        p1_key = f"{match_id}_P1_3.0"
+        p2_key = f"{match_id}_P2_3.0"
+        
+        # Check Player 1 (Home)
+        if home_odds >= TARGET_ODDS and p1_key not in notified_states:
+            notified_states.add(p1_key)
+            
+            if p2_key in notified_states:
+                # Player 2 ALREADY hit 3.0 earlier in the match! This is the perfect Arbitrage completion!
                 msg = (
-                    f"🚨 <b>EDGE DETECTED (GH Actions)</b> 🚨\n\n"
+                    f"✅ <b>ARBITRAGE COMPLETED! (DOUBLE SWING)</b> ✅\n\n"
                     f"<b>Match ID:</b> {match_id}\n"
                     f"<b>Score:</b> {score}\n\n"
-                    f"💰 <b>Market Odds:</b> {home_odds:.2f}\n"
-                    f"🎯 <b>True Fair Odds:</b> {true_odds:.2f}\n"
-                    f"📈 <b>Expected Value:</b> {ev_home*100:.1f}%\n\n"
+                    f"Player 2 hit {TARGET_ODDS} earlier, and now Player 1 hit {home_odds}!\n"
+                    f"Place your second bet on Player 1 to <b>GREEN OUT for guaranteed profit!</b>\n\n"
                     f"<a href='{match['url']}'>View Match</a>"
                 )
-                print(f"EDGE FOUND: {match_id} (EV {ev_home*100:.1f}%)")
-                send_telegram_alert(msg)
-                
-                # Push to Google Sheets Simulator Tracker
-                date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                export_prediction_to_sheet(
-                    date_str=date_str,
-                    match_id=match_id,
-                    matchup=matchup,
-                    score=score,
-                    selection="Player 1",
-                    market_odds=home_odds,
-                    true_odds=true_odds,
-                    ev_pct=ev_home * 100
+            else:
+                # First leg of the arbitrage
+                msg = (
+                    f"🚨 <b>ARBITRAGE LEG 1 OPENED</b> 🚨\n\n"
+                    f"<b>Match ID:</b> {match_id}\n"
+                    f"<b>Score:</b> {score}\n\n"
+                    f"Player 1 just crossed {TARGET_ODDS} (Current: {home_odds}).\n"
+                    f"Place your first bet on Player 1 and wait for the match to swing!\n\n"
+                    f"<a href='{match['url']}'>View Match</a>"
                 )
+                
+            print(f"ARB ALERT: P1 crossed {TARGET_ODDS} in {match_id}")
+            send_telegram_alert(msg)
+            
+            date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            export_prediction_to_sheet(date_str, match_id, matchup, score, "Player 1", home_odds, true_home_odds, 0)
+            
+        # Check Player 2 (Away)
+        if away_odds >= TARGET_ODDS and p2_key not in notified_states:
+            notified_states.add(p2_key)
+            
+            if p1_key in notified_states:
+                # Player 1 ALREADY hit 3.0 earlier!
+                msg = (
+                    f"✅ <b>ARBITRAGE COMPLETED! (DOUBLE SWING)</b> ✅\n\n"
+                    f"<b>Match ID:</b> {match_id}\n"
+                    f"<b>Score:</b> {score}\n\n"
+                    f"Player 1 hit {TARGET_ODDS} earlier, and now Player 2 hit {away_odds}!\n"
+                    f"Place your second bet on Player 2 to <b>GREEN OUT for guaranteed profit!</b>\n\n"
+                    f"<a href='{match['url']}'>View Match</a>"
+                )
+            else:
+                # First leg of the arbitrage
+                msg = (
+                    f"🚨 <b>ARBITRAGE LEG 1 OPENED</b> 🚨\n\n"
+                    f"<b>Match ID:</b> {match_id}\n"
+                    f"<b>Score:</b> {score}\n\n"
+                    f"Player 2 just crossed {TARGET_ODDS} (Current: {away_odds}).\n"
+                    f"Place your first bet on Player 2 and wait for the match to swing!\n\n"
+                    f"<a href='{match['url']}'>View Match</a>"
+                )
+                
+            print(f"ARB ALERT: P2 crossed {TARGET_ODDS} in {match_id}")
+            send_telegram_alert(msg)
+            
+            date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            export_prediction_to_sheet(date_str, match_id, matchup, score, "Player 2", away_odds, true_away_odds, 0)
         
         time.sleep(1)
         
-    save_state(notified_edges)
-    print("Scan complete. Shutting down until next cron run.")
+    save_state(notified_states)
+    print("Arbitrage scan complete. Shutting down until next cron run.")
 
 if __name__ == "__main__":
     main()
