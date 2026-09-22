@@ -82,6 +82,8 @@ def get_live_match_details(match_url):
         pass
     return None
 
+from sheets_exporter import export_prediction_to_sheet
+
 def main():
     print(f"[{datetime.now()}] Waking up via GitHub Actions to scan market...")
     math_engine = FastTennisMath(best_of=3)
@@ -92,24 +94,25 @@ def main():
     print(f"Found {len(live_matches)} matches.")
     
     # Limit to top 15 matches to keep execution under 20 seconds
-    # (ATP/WTA always appear at the top of Flashscore automatically)
     for match in live_matches[:15]:
         details = get_live_match_details(match['url'])
         if not details: continue
         
         home_odds, away_odds, score, match_id = details['home_odds'], details['away_odds'], details['score_text'], match['id']
+        # We don't have exact player names from Flashscore.mobi scraping currently, so we use Match URL ID
+        matchup = f"Match {match_id}"
         
         pA_live, pB_live = updater.get_probs()
         our_win_prob = math_engine.match_prob(pA_live, pB_live, 0, 0, 0, 0, 0, 0, True)
         ev_home = (our_win_prob * (home_odds - 1)) - ((1 - our_win_prob) * 1)
         
         if ev_home > 0.05:
-            # Create a unique ID for this specific score and odds combination
             alert_id = f"{match_id}_{score}_{home_odds}"
             if alert_id not in notified_edges:
                 notified_edges.add(alert_id)
                 true_odds = 1.0 / our_win_prob
                 
+                # Push to Telegram
                 msg = (
                     f"🚨 <b>EDGE DETECTED (GH Actions)</b> 🚨\n\n"
                     f"<b>Match ID:</b> {match_id}\n"
@@ -121,6 +124,19 @@ def main():
                 )
                 print(f"EDGE FOUND: {match_id} (EV {ev_home*100:.1f}%)")
                 send_telegram_alert(msg)
+                
+                # Push to Google Sheets Simulator Tracker
+                date_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                export_prediction_to_sheet(
+                    date_str=date_str,
+                    match_id=match_id,
+                    matchup=matchup,
+                    score=score,
+                    selection="Player 1",
+                    market_odds=home_odds,
+                    true_odds=true_odds,
+                    ev_pct=ev_home * 100
+                )
         
         time.sleep(1)
         
