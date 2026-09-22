@@ -91,7 +91,9 @@ def main():
     live_matches = get_live_matches()
     print(f"Found {len(live_matches)} matches.")
     
-    for match in live_matches:
+    # Limit to top 15 matches to keep execution under 20 seconds
+    # (ATP/WTA always appear at the top of Flashscore automatically)
+    for match in live_matches[:15]:
         details = get_live_match_details(match['url'])
         if not details: continue
         
