@@ -139,5 +139,25 @@ def main_loop():
             print(f"Main loop error: {e}")
             time.sleep(60) # Sleep on error and retry
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import os
+
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b"Tennis Bot is awake and scanning!")
+
+def keep_alive_server():
+    port = int(os.environ.get("PORT", 10000))
+    server = HTTPServer(('0.0.0.0', port), DummyHandler)
+    server.serve_forever()
+
 if __name__ == "__main__":
+    # Start the dummy web server in a background thread so Render doesn't crash the deploy
+    threading.Thread(target=keep_alive_server, daemon=True).start()
+    
+    # Start the actual trading bot loop
     main_loop()
